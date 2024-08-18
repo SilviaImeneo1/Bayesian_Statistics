@@ -1,0 +1,488 @@
+---
+title: "Bayesian Statistics - Final Project"
+author: "Silvia Imeneo"
+date: "2024-07-04"
+output: html_document
+bibliography: Reference.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r libraries, include=FALSE}
+library (arm)
+library(R2WinBUGS)
+library(rstanarm)
+library(ggplot2)
+theme_set(theme_minimal())
+library(bayesplot)
+library(rstan)
+library(invgamma)
+library(gridExtra)
+library(tidyr)
+library(rprojroot)
+library (foreign)
+library(loo)
+library(dplyr)
+#install.packages("readxl")
+library(readxl)
+library(knitr)
+
+```
+
+## Women victims of violence and charges pressed
+
+The dataset includes the answers to interviews submitted to 145 women that asked for help to the women's shelter of Trieste, GOAP, in 2020 and 2021.
+
+The variables resulting from the questionnaire submitted during the interviews are:
+
+* `id`: subject identifier
+* `age`: age of the woman. Factor with 6 levels. 
+* `education`: education level of the woman. Factor with 4 levels.
+* `nationality`: nationality of the woman. Factor with 3 levels.
+* `abuser`: relationship with the abusing man. Factor with 5 levels.
+* `shelter`: whether or not the woman has been moved to a safe house. Binary variable.
+* `admonition`: whether or not the woman requested the admonition of the abuser. Binary variable.
+* `charge`: whether or not the woman pressed charges against the abuser. Binary variable.
+* `crimes`: number of crimes reported by the woman when pressing charges. 
+* `divorce`: whether or not the woman divorced from the abuser if married. Binary variable.
+* `kids`: whether or not the woman had underage children with the abuser. Binary variable.
+* `need_law_enforcement`: whether or not the woman asked for help to the juridical system or to the police. Binary variable.
+* `experience_law`: feedback on the experience with juridical system/police. Factor with 4 levels.
+* `need_social_support`: whether or not the woman asked for help to social services or hospitals. Binary variable.
+* `experience_social`: feedback on the experience with social services/hospitals. Factor with 4 levels.  
+
+\
+
+In this study, the output variable considered is `charge`.  
+
+```{r datase, include=FALSE}
+# Reading the data
+data <- read_excel("Dataset.xlsx")
+
+# Setting discrete variables as factors
+data$charge <- as.factor(data$charge)
+data$age <- as.factor(data$age)
+data$education <-as.factor(data$education)
+data$nationality <- as.factor(data$nationality)
+data$abuser <- as.factor(data$abuser)
+data$shelter <- as.factor(data$shelter)
+data$admonition <- as.factor(data$admonition)
+data$divorce <- as.factor(data$divorce)
+data$kids <- as.factor(data$kids)
+data$need_law_enforcement <- as.factor(data$need_law_enforcement)
+data$experience_law <- as.factor(data$experience_law)
+data$need_social_support <- as.factor(data$need_social_support)
+data$experience_social <- as.factor(data$experience_social)
+
+```
+\
+
+
+## Initial graphical analysis of the data  
+
+```{r plots1, echo = FALSE, include=TRUE}
+# Plots of data
+ggplot(data, aes(x = charge))+
+  geom_bar(fill="pink")+
+  labs(title = "Distribution of charge",
+       x = "Charge (0 = No, 1 = Yes)",
+       y = "Count") +
+  theme_minimal()
+```
+
+It is clear that, in this dataset, the ratio of women who pressed charges is higher than the ratio of those who did not.  
+\
+
+```{r plots2, echo = FALSE, include=TRUE}
+#plot for abuser
+ggplot(data, aes(x = charge, fill = abuser)) + 
+  geom_bar(position = "dodge") +
+  labs(title = "Distribution of charge by abuser",
+       x = "Charge (0 = No, 1 = Yes)",
+       y = "Count",
+       fill = "abuser") +
+  theme_minimal()
+```
+
+Women who pressed charges are more than those who did not do it for any category of `abuser`, except for when they suffered violence from the partner or from a relative, a friend or a colleague.      
+\
+
+```{r plots3, echo = FALSE, include=TRUE}
+#plot for education - per ogni livello denunciano più che non denunciano (università, pareggia)
+ggplot(data, aes(x = charge, fill = education)) + 
+  geom_bar(position = "dodge") +
+  labs(title = "Distribution of charge by education",
+       x = "Charge (0 = No, 1 = Yes)",
+       y = "Count",
+       fill = "education") +
+  theme_minimal()
+```
+
+There seems to be no significant difference in the number of highly educated women who did and did not press charges against their abuser. It is evident instead that the number of women with mid-level education who pressed charges is much higher than the number of those who did not.  
+\
+
+```{r plots4, echo = FALSE, include=TRUE}
+#plot for age
+ggplot(data, aes(x = charge, fill = age)) + 
+  geom_bar(position = "dodge") +
+  labs(title = "Distribution of charge by age",
+       x = "Charge (0 = No, 1 = Yes)",
+       y = "Count",
+       fill = "age") +
+  theme_minimal()
+```
+
+No significant impact seems to be given by the age of a woman, since women pressing charges are always more than those not doing it, regardless of their age, except for the range 56-65 year old.  
+\
+
+```{r plots5, echo = FALSE, include=TRUE}
+#plot for kids
+ggplot(data, aes(x = charge, fill = kids)) + 
+  geom_bar(position = "dodge") +
+  labs(title = "Distribution of charge by kids",
+       x = "Charge (0 = No, 1 = Yes)",
+       y = "Count",
+       fill = "kids") +
+  theme_minimal()
+```
+
+The ratio of women pressing charges is higher for women having underage kids with the abuser than for those not having them.  
+
+\
+
+## Complete pooling  
+
+As an initial fit, we can consider a logistic regression that includes the discrete variable `abuser` and the binary variables `kids` and `admonition` as predictors for `charge`.  
+
+$$Pr(charge = 1) = logit^{-1}(\beta_0 + \beta^{abuser} (\text{abuser}_i)+\beta^{kids} (\text{kids}_i)+\beta^{admonition} (\text{admonition}_i))$$  
+**Classical approach**  
+We can start by fitting the logistic regression under the classical approach:
+```{r, echo= T, results= 'hide'}
+
+fit.0 <- glm(formula = charge ~
+                     abuser+kids+admonition,
+                     data = data,
+                     family = binomial(link="logit"))
+```
+
+```{r, echo= F, include=T}
+
+print(coef(summary(fit.0))[, c("Estimate", "Std. Error")])
+
+```
+The first thing that we probably notice is the very high standard error and the high estimate of the coefficient for the 'unknown' category of `abuser`.  
+A possible explanation for this might be the fact that, as seen from the graph above, all women being abused by an unknown man have pressed charges, so we might be in a case of (at least partial) separation, where knowing that the abusing man belongs to the 'unknown' category might be enough to expect that the woman will press charges. Nevertheless, we need to keep in mind that we have very few data for this category.  
+\
+
+**Bayesian approach with non informative priors**  
+
+Moving on from the classical approach, we can try the Bayesian one and see how and if things change when we assign very non informative priors to the parameters of our model.  
+```{r, echo= T, results= 'hide'}
+data$abuser <- relevel(data$abuser, ref = "Husband")
+
+fit.1 <- stan_glm(formula = charge ~
+                     abuser+kids+admonition,
+                     data = data,
+                     family = binomial(link="logit"),
+                     prior=normal(0,10^2),
+                     prior_intercept = normal(0, 10^2))
+```
+
+```{r, echo= F, include=T}
+
+fit.1
+```
+
+We now see a lower standard deviation for the 'Unknown' category, but the value remains quite high, so we try adding information to our model.    
+\
+
+**Bayesian approach with weakly informative priors**  
+```{r, echo= T, results= 'hide'}
+
+fit.2 <- stan_glm(formula = charge ~
+                     abuser+kids+admonition,
+                     data = data,
+                     family = binomial(link="logit"),
+                     prior=normal(0, 2.5),
+                     prior_intercept = normal(0, 10))
+```
+
+```{r, echo= F, include=TRUE}
+
+fit.2
+```
+As we can see from the results above, the weakly informative priors noticeably help in regularizing the model.  
+\
+
+**Interpretation of the coefficients**  
+
+Having set 'Husband' as reference category for `abuser`, the coefficients for the other categories represent the change in the log-odds of pressing charges for each category compared to the reference one. This means that:
+
+* **Ex**: a log-odds change of -0.6 translates to exp(-0.6) ≈ 0.55, meaning that the odds of pressing charges are about 45% lower when the abuser is an ex compared to when it's the husband.
+* **Partner**: exp(-1.1) ≈ 0.33, meaning that the odds of pressing charges are about 67% lower when the abuser is the partner compared to when it's the husband.
+* **Relative/friend/colleague**: exp(-1.2) ≈ 0.30, the odds of pressing charges are about 70% lower when the abuser is a relative or a friend, or a colleague compared to when it's the husband.
+* **Unknown**: exp(2.2) ≈ 9, meaning that the odds of pressing charges are about 9 times higher when the abuser is an unknown person compared to when it's the husband.  
+
+Furthermore, according to the model, having underage **kids** with the abuser increases the likelihood of pressing charges by about 65% compared to the baseline case of no underage kid with the abuser. About the last coefficient: if a woman had already requested an **admonition** against her abuser in the past, the odds of her pressing charges are $exp(1.0)\approx 2.72$ times higher than if she had not requested it.  
+\
+
+**No intercept model**  
+
+We try the following model just to be able to give an interpretation of the coefficients without having to rely on a baseline category.  
+
+```{r, echo= T, results= 'hide'}
+
+fit.3 <- stan_glm(formula = charge ~ 0 +
+                    abuser + kids + admonition,
+                  data = data,
+                  family = binomial(link="logit"),
+                  prior=normal(0,2.5),
+                  prior_intercept = normal(0, 10))
+```
+
+```{r, echo= F, include=TRUE}
+
+fit.3
+```
+From the results above, we can say, for example, that, for a woman who is abused by her husband, the odds of pressing charges are $exp(0.6)\approx 1.82$ times higher than if she wasn't abused by her husband.  
+
+We could also compute some probabilities, as:  
+
+* the probability of a woman pressing charges if the abuser is her partner is around 37.7%  
+
+```{r, echo= TRUE, include=TRUE}
+# abuserPartner + kids0 + admonition0
+# log_odds = -0.5
+# probability:
+p <- exp(-0.5)/(1+exp(-0.5))
+p
+```
+* the probability of a woman pressing charges if the abuser is a relative or a friend or a colleague, she has no underage kids with him, and she asked for an admonition is around 60%.  
+```{r, echo= TRUE, include=TRUE}
+# abuser RelativeFriendColleague + kids0 + admonition0
+# log_odds = -0.6 + 1.0 = 0.4
+p <- exp(0.4)/(1+exp(0.4))
+p
+```
+\
+
+
+## Partial pooling
+
+**Varying-intercept model**  
+
+In the partial pooling approach, we assign a random intercept to `abuser`. This means that we assume its different levels as coming from a common distribution: each level has its own intercept, but these are all drawn from the same distribution.  
+The varying-intercept model accounts for potential correlation between levels and might borrow strength across levels, leading to more stable estimates (especially with sparse data).  
+In the example below, we have `kids` and `admonition` as fixed effects and `abuser` as random effect.  
+
+$$Pr(charge = 1) = logit^{-1}(\alpha_{j[i]}+\beta^{kids} \text{kids}_i+\beta^{admonition} \text{admonition}_i) \text{, for } i = 1, ..., n $$
+$$\alpha_j \sim N (\mu_{\alpha}, \sigma^2_{abuser}) \text{, for } j = 1, ..., 5$$
+```{r, echo= T, results= 'hide'}
+
+fit.4 <- stan_glmer(charge ~ kids + admonition + (1|abuser),
+                     data = data,
+                     family = binomial(link="logit"),
+                     prior=normal(0,2.5),
+                     prior_intercept = normal(0, 10))
+```
+
+```{r, echo= F, include=TRUE}
+fit.4
+```
+From the results above, we see that the coefficients for the two fixed effects `kids` and `admonition` are very similar to what we got before in the non hierarchical model.  
+
+In the lower part of the results, we find the standard deviation for the abuser intercept, which indicates the between variance, $\sigma^2_{abuser}$, so the variability across the different levels of `abuser`. The higher the variance, the more the data in the different levels are dissimilar.  
+
+We can also examine the estimates of the five abuser intercepts, the $\alpha_{j}$:  
+```{r, echo= TRUE, include=TRUE}
+coef(fit.4)
+```
+\
+Furthermore, we can use a visual support and plot the 50% and 95% credible intervals for all the parameters:  
+```{r, echo=FALSE}
+
+knitr::include_graphics("logistic_M1abuser_t.jpeg")
+```
+\  
+\
+
+Similarly, we can plot the posterior mean $\pm$ the standard error of the $\alpha_j$ random effects:  
+```{r, echo=FALSE}
+
+knitr::include_graphics("random_effect.jpeg")
+
+```
+
+
+**Probabilities**  
+
+Having set `abuser` as the random intercept, we can now compute the different probabilities of pressing charges conditioned on who the abuser is, without having to consider a baseline category nor having to remove the intercept as done before.    
+We could check the same probabilities computed before and we would see that:  
+
+* the probability of a woman pressing charges if the abuser is her partner is around 43%.  
+```{r, echo= TRUE, include=TRUE}
+# abuser Partner + kids0 + admonition0
+# log_odds = -0.26
+# probability:
+p <- exp(-0.26)/(1+exp(-0.26))
+p
+```
+* the probability of a woman pressing charges if the abuser is a relative or a friend or a colleague, she has no underage kids with him and she asked for an admonition is around 67%.  
+```{r, echo= TRUE, include=TRUE}
+# abuser RelativeFriendColleague + kids0 + admonition1
+# log_odds = -0.20 + 0.92 = 0.72
+# probability: 
+p <- exp(0.72)/(1+exp(0.72))
+p
+```
+These probabilities are not drastically different than the ones computed before, but they are not equal. The difference that we see might be due to the fact that the partial pooling model regularizes the group-specific estimates towards the overall mean, reducing the influence of extreme values that can occur in the no-intercept model, especially when we have categories with few observations.  
+\
+
+**Adding more random intercepts**  
+
+Since the dataset contains some demographics variables, we can try to include them as additional random intercepts:
+
+$$Pr(charge = 1) = logit^{-1}(\alpha^{abuser}_{j[i]}+\alpha^{age}_{k[i]}+\alpha^{education}_{l[i]}+\alpha^{nationality}_{m[i]} +\beta^{kids} \text{kids}_i+\beta^{admonition} \text{admonition}_i) \text{, for } i = 1, ..., n $$
+$$\alpha^{abuser}_j \sim N (\mu_{\alpha}, \sigma^2_{abuser}) \text{, for } j = 1, ..., 5$$
+$$\alpha^{age}_k \sim N (0, \sigma^2_{age}) \text{, for } k = 1, ..., 6$$
+$$\alpha^{education}_l \sim N (0, \sigma^2_{education}) \text{, for } l = 1, ..., 4$$
+
+$$\alpha^{nationality}_m \sim N (0, \sigma^2_{nationality}) \text{, for } m = 1, ..., 3$$
+
+```{r, echo= T, results= 'hide'}
+
+fit.5 <- stan_glmer(charge ~ kids + admonition +  (1|abuser)+(1|age)+(1|education)+(1|nationality),
+                    data = data,
+                    family = binomial(link="logit"),
+                    prior=normal(0,2.5),
+                    prior_intercept = normal(0, 10))
+```
+
+```{r, echo= F, include=TRUE}
+fit.5
+```
+```{r, echo= F, include=F}
+coef(fit.5)
+```
+
+The coefficients for `kids` and `admonition` are very similar to the ones seen in the previous models.  
+Regarding the standard deviation of the four random intercepts, we can see that it is quite high for all of them. In general, the standard deviation tells us by how much the log-odds of a woman pressing charges differs from the overall baseline given the level of the categorical variable that we are considering. For `education`, for example, we see that the log-odds of a woman pressing charges can differ by around $\pm$ 1.1 from the overall baseline based on the woman's education level. The overall baseline would be the log-odds of pressing charges for all women in the dataset, regardless of their education.  
+High variability for the intercepts might imply that all of those four random effects that we included in our model have a strong impact on the likelihood of pressing charges, so we might want to keep them in the model.  
+\
+
+## Model Checking  
+
+**MCMC diagnostic**  
+
+A first thing that we can check is the performance of the MCMC algorithm used to fit our models.  
+We focus on fit.4 and fit.5. For both, when running the `stan_glmer` command repeatedly, sometimes a warning message appears, stating that there were up to 3 divergent transitions after the warm up. It is a very low number and Stan itself adds: "if you get only few divergences and you get good Rhat and ESS values, the resulting posterior is often good enough to move forward".  
+For this reason, we check the **Gelman-Rubin** statistics and the **Effective Sample Size**.  
+
+For fit.4 we have:
+```{r, echo= T, include=T}
+summary_fit.4 <- summary(fit.4)
+summary_df_fit.4 <- as.data.frame(summary_fit.4)
+rhat_n_eff_fit.4 <- summary_df_fit.4[, c("Rhat", "n_eff")]
+print(rhat_n_eff_fit.4)
+```
+Rhat is always $\leq$ 1, indicating that all parameters got to convergence and so the mixing is satisfactory.  
+Regarding the effective sample size, since we didn't change the default values in the `stan_glmer` fit, we know that the upper bound for the effective number of independent simulation draws is S x M = 2000 x 4 = 8000. The results that we got are quite good for some coefficients and lower for others. Nevertheless, the lowest values are always around 20% of the total number of iterations, so we should be fine.
+\
+
+For fit.5 we have similar results:  
+```{r, echo= T, include=T}
+summary_fit.5 <- summary(fit.5)
+summary_df_fit.5 <- as.data.frame(summary_fit.5)
+rhat_n_eff_fit.5 <- summary_df_fit.5[, c("Rhat", "n_eff")]
+print(rhat_n_eff_fit.5)
+```
+
+\
+
+**Traceplot**  
+As a further check for convergence, we can visualize the traceplot for the two models. We see that, for both of them, the chains overlap for all the parameters and cannot be distinguished.  
+
+```{r, echo=T, results='hide'}
+# Model fit.4
+posterior_samples_fit4 <- as.array(fit.4)
+mcmc_trace(posterior_samples_fit4)
+```
+
+```{r, echo=T, results='hide'}
+# Model fit.5
+posterior_samples_fit5 <- as.array(fit.5)
+mcmc_trace(posterior_samples_fit5)
+```
+ 
+\
+
+**Posterior predictive distribution**  
+The plots of the posterior predictive distributions provide a graphical assessment of how well the models' predictions match the observed data. For both the two graphs below, we can see that the models fit the shape of the underlying data.
+```{r, echo=T, results= 'hide'}
+# Model fit.4
+pp_check(fit.4, plotfun = "dens_overlay")
+```
+
+```{r, echo=T, results= 'hide'}
+# Model fit.5
+pp_check(fit.5, plotfun = "dens_overlay")
+```
+
+\  
+
+Since we are in a logistic regression and data are actually only 0 and 1, most suited graphs would be the bar ones, which indicate the exact same thing.  
+
+```{r, echo=T, results= 'hide'}
+# Model fit.4
+pp_check(fit.4, plotfun = "ppc_bars")
+```
+
+```{r, echo=T, results= 'hide'}
+# Model fit.5
+pp_check(fit.5, plotfun = "ppc_bars")
+```
+
+\
+
+**Summary statistics**  
+The two graphs below allow us to compare a summary statistics "T(y)" of the observed data with the distribution of the same statistics calculated from the posterior predictive simulations, so "T(y_rep)". The statistics chosen in this case is the mean.  
+This helps in assessing how well the model fits the data by visualizing whether the observed statistics falls within the range of statistics generated from the model.  
+```{r, echo=T, results= 'hide'}
+# Model fit.4
+pp_check(fit.4, n = 500, plotfun = "stat")
+```
+
+```{r, echo=T, results= 'hide'}
+# Model fit.5
+pp_check(fit.5, n = 500, plotfun = "stat")
+```
+
+From both the two graphs, we can see that the Bayesian p-value is not too far from 0.5. This indicates a good fit, as the observed statistics is about as likely as the replicated statistics.  
+
+
+## Model Comparison  
+
+As final step, aiming at choosing one single model, we compare fit.4 and fit.5. We do it by using the Leave-One-Out Information Criterion (LOOIC).    
+
+```{r, echo=T, results= T}
+loo.4 <- loo(fit.4)
+loo.5 <- loo(fit.5)
+
+looic_fit4 <- loo.4$estimates["looic", "Estimate"]
+looic_fit5 <- loo.5$estimates["looic", "Estimate"]
+
+print(looic_fit4)
+print(looic_fit5)
+
+```
+The LOOIC is based on the concept of leave-one-out cross-validation. For each data point in the dataset, it fits the model to the data, leaving out one observation. It then computes the log predictive density of that left-out observation.  
+As for all the Predictive Information Criteria, we prefer the model that has the lowest indicator so, for our case, we see that fit.5 is the best out of the two models and hence the one that we are going to select.  
+
+\
+
+## References
+Andrew Gelman, Jennifer Hill. 2007. _Data Analysis Using Regression and Multilevel/Hierarchical Models_. Cambridge University Press.  
+
+Buis, Maarten L. 2012. _Stata Tip 106: With or Without Reference._ The Stata Journal 12 (1): 162–64.
